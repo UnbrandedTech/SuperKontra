@@ -11,6 +11,8 @@ export { Mixer } from './audio.js';
 export { FSM } from './fsm.js';
 export { findPath } from './path.js';
 export { Debug } from './debug.js';
+export { Particles } from './particles.js';
+export { Camera } from './camera.js';
 export {
   Tweens,
   linear,

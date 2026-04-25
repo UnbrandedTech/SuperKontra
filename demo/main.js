@@ -30,11 +30,15 @@ import {
   easeOutBack
 } from 'super-kontra/tween.js';
 import { Debug } from 'super-kontra/debug.js';
+import { Particles } from 'super-kontra/particles.js';
+import { Camera } from 'super-kontra/camera.js';
 
 const { canvas, context } = init();
 initKeys();
 
 const debug = Debug({ context, position: 'top-right' });
+const particles = Particles({ context, max: 512 });
+const camera = Camera({ context });
 
 const W = canvas.width;
 const H = canvas.height;
@@ -98,10 +102,10 @@ let bestCount = save.read()?.bestCount ?? 0;
 // ----------------------------------------------------------------
 const world = World({
   gravity: { x: 0, y: 800 },
-  // play a thud whenever a circle hits something at non-trivial
-  // speed. restricting to "one party is static" keeps the audio
-  // floor/wall-driven rather than firing on every body-body bump
-  // in the pile (which would be a constant rumble).
+  // play a thud + spawn sparks on hard impacts. restricting to
+  // "one party is static" keeps the audio floor/wall-driven rather
+  // than firing on every body-body bump in the pile (which would
+  // be a constant rumble).
   onCollide(a, b, info) {
     if (info.impactSpeed < 150) return;
     if (a.mass !== 0 && b.mass !== 0) return;
@@ -110,6 +114,22 @@ const world = World({
       rate: 0.7 + Math.min(info.impactSpeed / 800, 0.6),
       volume: Math.min(info.impactSpeed / 600, 1)
     });
+    // sparks burst from the contact point, biased away from the
+    // static body's normal (axis points A→B, so the moving body's
+    // surface is along the axis from the static body)
+    const dyn = a.mass === 0 ? b : a;
+    const dynColor = dyn.color || '#ffaa00';
+    particles.spark(info.point[0], info.point[1], {
+      count: Math.min(((info.impactSpeed / 100) | 0) + 4, 16),
+      color: dynColor
+    });
+    // big slam → screen shake. impactSpeed > 600 is "really hard"
+    if (info.impactSpeed > 600) {
+      camera.shake(
+        Math.min((info.impactSpeed - 600) / 50, 8),
+        0.2
+      );
+    }
   }
 });
 // Walls extend well past the visible canvas so a fast body can't
@@ -275,6 +295,8 @@ const game = FSM({
           for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
         });
         debug.time('rope', () => rope.step(step));
+        particles.tick(step);
+        camera.tick(step);
         // remove escapees so the array doesn't grow unbounded
         for (let i = bodies.length - 1; i >= 0; i--) {
           const b = bodies[i];
@@ -285,44 +307,52 @@ const game = FSM({
         }
       },
       render() {
-        // floor
-        context.fillStyle = '#3a3a55';
-        context.fillRect(0, FLOOR_Y, W, H - FLOOR_Y);
+        // scene — rendered through camera.draw() so the shake
+        // offset applies to the entire world. HUD and overlays
+        // stay outside so they don't shake.
+        camera.draw(() => {
+          // floor
+          context.fillStyle = '#3a3a55';
+          context.fillRect(0, FLOOR_Y, W, H - FLOOR_Y);
 
-        // bodies — rendered with a tick mark so rotation is visible
-        for (const b of bodies) {
-          context.save();
-          context.translate(b.x, b.y);
-          context.rotate(b.rotation || 0);
-          context.fillStyle = b.color;
-          context.beginPath();
-          context.arc(0, 0, b.radius, 0, Math.PI * 2);
-          context.fill();
-          context.strokeStyle = 'rgba(0,0,0,0.4)';
+          // bodies — rendered with a tick mark so rotation is visible
+          for (const b of bodies) {
+            context.save();
+            context.translate(b.x, b.y);
+            context.rotate(b.rotation || 0);
+            context.fillStyle = b.color;
+            context.beginPath();
+            context.arc(0, 0, b.radius, 0, Math.PI * 2);
+            context.fill();
+            context.strokeStyle = 'rgba(0,0,0,0.4)';
+            context.lineWidth = 2;
+            context.beginPath();
+            context.moveTo(0, 0);
+            context.lineTo(b.radius * 0.7, 0);
+            context.stroke();
+            context.restore();
+          }
+
+          // rope
+          context.strokeStyle = '#bbb';
           context.lineWidth = 2;
           context.beginPath();
-          context.moveTo(0, 0);
-          context.lineTo(b.radius * 0.7, 0);
+          for (let i = 0; i < ropePoints.length; i++) {
+            const p = ropePoints[i];
+            if (i === 0) context.moveTo(p.x, p.y);
+            else context.lineTo(p.x, p.y);
+          }
           context.stroke();
-          context.restore();
-        }
+          context.fillStyle = '#ff7eb6';
+          context.beginPath();
+          context.arc(ropeTail.x, ropeTail.y, 6, 0, Math.PI * 2);
+          context.fill();
 
-        // rope
-        context.strokeStyle = '#bbb';
-        context.lineWidth = 2;
-        context.beginPath();
-        for (let i = 0; i < ropePoints.length; i++) {
-          const p = ropePoints[i];
-          if (i === 0) context.moveTo(p.x, p.y);
-          else context.lineTo(p.x, p.y);
-        }
-        context.stroke();
-        context.fillStyle = '#ff7eb6';
-        context.beginPath();
-        context.arc(ropeTail.x, ropeTail.y, 6, 0, Math.PI * 2);
-        context.fill();
+          // particles last so sparks draw on top of the bodies
+          particles.render();
+        });
 
-        // HUD
+        // HUD — outside camera.draw(), so it stays still during shake
         context.fillStyle = '#888';
         context.font = '12px ui-monospace, monospace';
         context.textAlign = 'left';
@@ -408,6 +438,7 @@ GameLoop({
     let awake = 0;
     for (const b of bodies) if (!b.sleeping) awake++;
     debug.count('awake', awake);
+    debug.count('parts', particles.aliveCount());
     debug.render();
   }
 }).start();

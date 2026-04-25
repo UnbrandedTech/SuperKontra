@@ -17,6 +17,8 @@ This repo currently consumes a local kontra fork via `file:../kontra` while [str
 | `super-kontra/tween` | Tween manager + 19 Penner easing functions (linear/quad/cubic/sine/expo/back/bounce in/out/inOut variants). Interpolate any object's properties over time; tick(dt) advances all active tweens. | implemented |
 | `super-kontra/path` | A* pathfinding on a 2D tile grid. 4- or 8-way connectivity, weighted costs, pluggable heuristic. Drop-in for kontra TileEngine layer data. | implemented |
 | `super-kontra/debug` | On-canvas FPS / section-timing / counter overlay. Drop-in for any kontra GameLoop. Toggle visibility, reposition. | implemented |
+| `super-kontra/particles` | Pooled particle system with spark / smoke / exhaust / flash presets. Single ring buffer, no per-emit allocations. Customise via `emit({ angle, spread, speed, ttl, drag, gravity, ... })`. | implemented |
+| `super-kontra/camera` | Camera helpers — currently screen shake (decay-based, max-takes-priority semantics). `camera.draw(fn)` wraps a render block in the shake transform. Future: follow / lerp helpers. | implemented |
 
 ## Install (during local dev)
 
