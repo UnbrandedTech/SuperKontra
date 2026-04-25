@@ -15,6 +15,7 @@ This repo currently consumes a local kontra fork via `file:../kontra` while [str
 | `super-kontra/audio` | Channel-based mixer over `HTMLAudioElement`. Pulls audio by name from kontra's `audioAssets`, supports per-channel volume/mute/exclusive playback, fades, and overlapping SFX. | implemented |
 | `super-kontra/fsm` | Finite-state machine for game flow (menu/playing/paused/gameOver). Stack-based — push/pop overlay states like pause menus on top of an active scene. Per-state lifecycle hooks dispatched from your kontra GameLoop. | implemented |
 | `super-kontra/tween` | Tween manager + 19 Penner easing functions (linear/quad/cubic/sine/expo/back/bounce in/out/inOut variants). Interpolate any object's properties over time; tick(dt) advances all active tweens. | implemented |
+| `super-kontra/path` | A* pathfinding on a 2D tile grid. 4- or 8-way connectivity, weighted costs, pluggable heuristic. Drop-in for kontra TileEngine layer data. | implemented |
 
 ## Install (during local dev)
 
@@ -115,6 +116,20 @@ let tweens = Tweens();
 tweens.add(player, { x: 200, alpha: 0 }, 1.5, easeOutQuad)
   .then(() => console.log('arrived'));
 loop.update = dt => { game.update(dt); tweens.tick(dt); };
+
+// pathfinding — A* over a kontra TileEngine collision layer
+import { findPath } from 'super-kontra/path';
+let layer = tileEngine.layerMap.collision;
+let path = findPath({
+  start: { col: playerCol, row: playerRow },
+  goal:  { col: targetCol, row: targetRow },
+  width: tileEngine.width,
+  height: tileEngine.height,
+  cost: (col, row) =>
+    layer.data[row * tileEngine.width + col] ? Infinity : 1,
+  diagonal: true
+});
+// path = [{col, row}, ...] from start to goal, or null if blocked
 
 // versioned save / load
 let save = Save({

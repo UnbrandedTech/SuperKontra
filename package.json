@@ -9,6 +9,7 @@
     "./audio": "./src/audio.js",
     "./collide": "./src/collide.js",
     "./fsm": "./src/fsm.js",
+    "./path": "./src/path.js",
     "./physics-rigid": "./src/physics-rigid.js",
     "./physics-verlet": "./src/physics-verlet.js",
     "./state": "./src/state.js",

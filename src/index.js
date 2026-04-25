@@ -9,6 +9,7 @@ export { Verlet } from './physics-verlet.js';
 export { Save } from './state.js';
 export { Mixer } from './audio.js';
 export { FSM } from './fsm.js';
+export { findPath } from './path.js';
 export {
   Tweens,
   linear,
