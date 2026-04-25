@@ -96,7 +96,22 @@ let bestCount = save.read()?.bestCount ?? 0;
 // ----------------------------------------------------------------
 // Physics world — gravity + walls
 // ----------------------------------------------------------------
-const world = World({ gravity: { x: 0, y: 800 } });
+const world = World({
+  gravity: { x: 0, y: 800 },
+  // play a thud whenever a circle hits something at non-trivial
+  // speed. restricting to "one party is static" keeps the audio
+  // floor/wall-driven rather than firing on every body-body bump
+  // in the pile (which would be a constant rumble).
+  onCollide(a, b, info) {
+    if (info.impactSpeed < 150) return;
+    if (a.mass !== 0 && b.mass !== 0) return;
+    mixer.play(thudAudio, {
+      channel: 'sfx',
+      rate: 0.7 + Math.min(info.impactSpeed / 800, 0.6),
+      volume: Math.min(info.impactSpeed / 600, 1)
+    });
+  }
+});
 // Walls extend well past the visible canvas so a fast body can't
 // tunnel through in a single frame. With a 10px wall and circles
 // reaching 600+ px/s after a few bounces, dt × v can exceed wall
@@ -148,28 +163,6 @@ function spawnCircle(x, y) {
     bestCount = bodies.length;
     save.write({ bestCount });
     bestPopElapsed = 0;
-  }
-}
-
-// ----------------------------------------------------------------
-// Floor-impact detection — listen for body.vy crossing the
-// "was falling fast, now slowed" threshold near the floor and
-// fire a thud per impact (rate randomised so chains don't sound
-// machine-gun-like)
-// ----------------------------------------------------------------
-const prevVy = new WeakMap();
-function checkImpacts() {
-  for (const b of bodies) {
-    const wasFast = (prevVy.get(b) ?? 0) > 220;
-    const nowSlow = Math.abs(b.vy) < 120;
-    const nearFloor = b.y + b.radius >= FLOOR_Y - 4;
-    if (wasFast && nowSlow && nearFloor) {
-      mixer.play(thudAudio, {
-        channel: 'sfx',
-        rate: 0.8 + Math.random() * 0.5
-      });
-    }
-    prevVy.set(b, b.vy);
   }
 }
 
@@ -282,7 +275,6 @@ const game = FSM({
           for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
         });
         debug.time('rope', () => rope.step(step));
-        checkImpacts();
         // remove escapees so the array doesn't grow unbounded
         for (let i = bodies.length - 1; i >= 0; i--) {
           const b = bodies[i];
@@ -398,28 +390,18 @@ onKey('r', () => {
 // 'd' toggles the debug overlay
 onKey('d', () => debug.toggle());
 
-// kontra's GameLoop is accumulator-style: when a frame takes
-// longer than 16ms it tries to "catch up" by running multiple
-// update() ticks before the next render. once update is itself
-// slow (heavy physics, lots of bodies), the catch-up makes the
-// next frame longer, which queues more catch-ups — the classic
-// spiral of death. this counter caps catch-ups per visible
-// frame: under heavy load the simulation runs slower than
-// real-time but the frame rate stays responsive.
-let updatesThisFrame = 0;
-const MAX_CATCH_UP = 2;
-
 GameLoop({
+  // maxCatchUp caps catch-up updates per visible frame so a slow
+  // physics tick can't spiral into a slideshow. under heavy load
+  // the sim runs slower than real-time (slow-motion) instead.
+  maxCatchUp: 2,
   update(dt) {
-    if (updatesThisFrame >= MAX_CATCH_UP) return;
-    updatesThisFrame++;
     debug.time('upd', () => {
       game.update(dt);
       tweens.tick(dt);
     });
   },
   render() {
-    updatesThisFrame = 0;
     debug.tick();
     debug.time('rndr', () => game.render());
     debug.count('bodies', bodies.length);

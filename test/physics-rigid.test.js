@@ -701,6 +701,114 @@ test('sleep-vs-sleep pair tests are skipped (perf invariant)', () => {
   assert.equal(b.x, 10);
 });
 
+// --------------------------------------------------------------
+// onCollide callback
+// --------------------------------------------------------------
+
+test('onCollide fires when two bodies collide and resolve', () => {
+  const events = [];
+  const world = World({
+    onCollide(a, b, info) {
+      events.push({ a, b, info });
+    }
+  });
+  const left = world.add({
+    x: 0, y: 0, width: 10, height: 10, mass: 1, vx: 50
+  });
+  const right = world.add({
+    x: 12, y: 0, width: 10, height: 10, mass: 1
+  });
+  for (let i = 0; i < 30; i++) world.step(1 / 60);
+  assert.ok(
+    events.length > 0,
+    'expected at least one onCollide event'
+  );
+  const e = events[0];
+  // a/b are the two bodies (in either order — matches pair scan)
+  assert.ok(
+    (e.a === left && e.b === right) || (e.a === right && e.b === left)
+  );
+  // info shape
+  assert.ok(typeof e.info.overlap === 'number');
+  assert.ok(typeof e.info.axis.x === 'number');
+  assert.ok(Array.isArray(e.info.point));
+  assert.ok(typeof e.info.impactSpeed === 'number');
+});
+
+test('onCollide info.impactSpeed reflects the pre-impulse approach speed', () => {
+  let captured = null;
+  const world = World({
+    onCollide(a, b, info) {
+      // capture the first event only — subsequent ticks are
+      // post-bounce and will have a smaller relative velocity
+      if (!captured) captured = info.impactSpeed;
+    }
+  });
+  // a hits b head-on at vx=100 from a near-touching distance, so
+  // approach speed is ~100 with very little gravity influence
+  world.add({
+    x: 0, y: 0, width: 10, height: 10, mass: 1, vx: 100
+  });
+  world.add({
+    x: 11, y: 0, width: 10, height: 10, mass: 1
+  });
+  world.step(1 / 60);
+  assert.ok(
+    captured > 80 && captured < 120,
+    `impactSpeed should be ~100, got ${captured}`
+  );
+});
+
+test('onCollide does NOT fire on already-separating contacts', () => {
+  // two bodies overlapping but moving apart — the resolve early-
+  // returns before applying any impulse, so no event should fire
+  let calls = 0;
+  const world = World({
+    onCollide() {
+      calls++;
+    }
+  });
+  world.add({
+    x: 0, y: 0, width: 10, height: 10, mass: 1, vx: -10
+  });
+  world.add({
+    x: 5, y: 0, width: 10, height: 10, mass: 1, vx: 10
+  });
+  // overlapping by 5px on x but A is moving left, B is moving right
+  // — separating along the contact normal
+  world.step(1 / 60);
+  assert.equal(calls, 0);
+});
+
+test('onCollide receives a usable axis/point pair (axis points A→B, point on contact surface)', () => {
+  let info;
+  const world = World({
+    onCollide(_, __, i) {
+      info = i;
+    }
+  });
+  // ball hits a wall to its right
+  world.add({
+    x: 0, y: 0, width: 10, height: 10, mass: 1, vx: 50
+  });
+  world.add({
+    x: 8, y: 0, width: 10, height: 10, mass: 0
+  });
+  world.step(1 / 60);
+  assert.ok(info, 'expected an onCollide event');
+  // axis points from A (ball) toward B (wall) → +x
+  assert.ok(
+    info.axis.x > 0,
+    `axis should point right, got x=${info.axis.x}`
+  );
+  // contact point lies somewhere on the contact surface; for two
+  // 10×10 AABBs hitting at the boundary the centre is around x=9
+  assert.ok(
+    info.point[0] > 7 && info.point[0] < 12,
+    `point.x should be near contact, got ${info.point[0]}`
+  );
+});
+
 test('two static bodies do not interact', () => {
   const world = World();
   const a = world.add({

@@ -44,6 +44,12 @@ const PERCENT = 0.2;
  *   velocity (rad/s).
  * @param {number} [opts.sleepTime=0.5] - how long the speed must
  *   stay low before the body is put to sleep, in seconds.
+ * @param {(a: Object, b: Object, info: {overlap: number, axis: {x: number, y: number}, point: [number, number], impactSpeed: number}) => void} [opts.onCollide]
+ *   - called once per resolved collision, AFTER the impulse has
+ *   been applied. `info.impactSpeed` is the pre-impulse approach
+ *   speed along the contact normal — the most useful "how hard
+ *   did it hit" metric for sound effects and particles. Skips
+ *   the callback for already-separating contacts (no impulse fired).
  * @returns {{
  *   bodies: Object[],
  *   gravity: {x: number, y: number},
@@ -60,6 +66,7 @@ export function World(opts = {}) {
   const sleepLinear = opts.sleepLinear ?? 1;
   const sleepAngular = opts.sleepAngular ?? 0.05;
   const sleepTime = opts.sleepTime ?? 0.5;
+  const onCollide = opts.onCollide;
 
   function add(body) {
     body.vx ??= 0;
@@ -124,7 +131,7 @@ export function World(opts = {}) {
       if (r) {
         if (a.sleeping) wake(a);
         if (b.sleeping) wake(b);
-        resolve(a, b, r);
+        resolve(a, b, r, onCollide);
       }
     }
 
@@ -250,7 +257,7 @@ function bodyCenter(body) {
   };
 }
 
-function resolve(a, b, response) {
+function resolve(a, b, response, onCollide) {
   const n = response.axis;
   const overlap = response.overlap;
   const point = response.point;
@@ -337,4 +344,16 @@ function resolve(a, b, response) {
   a.y -= correction * n.y * invMassA;
   b.x += correction * n.x * invMassB;
   b.y += correction * n.y * invMassB;
+
+  // notify the user. velN is negative when bodies are approaching;
+  // |velN| is the most useful "how hard did this hit" metric for
+  // sound and particle reactions, so we expose it as impactSpeed.
+  if (onCollide) {
+    onCollide(a, b, {
+      overlap,
+      axis: n,
+      point,
+      impactSpeed: -velN
+    });
+  }
 }
