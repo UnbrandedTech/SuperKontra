@@ -11,7 +11,8 @@
     "./fsm": "./src/fsm.js",
     "./physics-rigid": "./src/physics-rigid.js",
     "./physics-verlet": "./src/physics-verlet.js",
-    "./state": "./src/state.js"
+    "./state": "./src/state.js",
+    "./tween": "./src/tween.js"
   },
   "scripts": {
     "test": "node --test test/",

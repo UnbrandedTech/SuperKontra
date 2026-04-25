@@ -13,7 +13,8 @@ This repo currently consumes a local kontra fork via `file:../kontra` while [str
 | `super-kontra/physics-verlet` | Positional Verlet solver — particles, distance constraints, pin constraints. Ropes / cloth / softbody. | implemented |
 | `super-kontra/state` | Versioned localStorage saves with automatic schema migrations and string export/import for cloud sync. | implemented |
 | `super-kontra/audio` | Channel-based mixer over `HTMLAudioElement`. Pulls audio by name from kontra's `audioAssets`, supports per-channel volume/mute/exclusive playback, fades, and overlapping SFX. | implemented |
-| `super-kontra/fsm` | Finite-state machine for game flow (menu/playing/paused/gameOver). Per-state lifecycle hooks dispatched from your kontra GameLoop. | implemented |
+| `super-kontra/fsm` | Finite-state machine for game flow (menu/playing/paused/gameOver). Stack-based — push/pop overlay states like pause menus on top of an active scene. Per-state lifecycle hooks dispatched from your kontra GameLoop. | implemented |
+| `super-kontra/tween` | Tween manager + 19 Penner easing functions (linear/quad/cubic/sine/expo/back/bounce in/out/inOut variants). Interpolate any object's properties over time; tick(dt) advances all active tweens. | implemented |
 
 ## Install (during local dev)
 
@@ -77,7 +78,7 @@ theme.fadeOut(2);
 // in your update():
 mixer.tick(1 / 60);
 
-// finite-state machine for game flow
+// finite-state machine for game flow (with stacked overlays)
 let game = FSM({
   initial: 'menu',
   states: {
@@ -91,6 +92,8 @@ let game = FSM({
       render()   { /* draw game */ }
     },
     paused: {
+      // a stacked state — playing renders behind it, but only paused
+      // ticks while paused is on top
       render() { /* draw pause overlay */ }
     }
   }
@@ -102,8 +105,16 @@ let loop = GameLoop({
   render()   { game.render(); }
 });
 
-// transition with a payload
 game.transition('playing', { level: 1 });
+// open a pause menu over the playing scene without losing it
+game.push('paused');
+game.pop();   // dismiss; playing continues without re-entering
+
+// tween — animate object properties over time with easing
+let tweens = Tweens();
+tweens.add(player, { x: 200, alpha: 0 }, 1.5, easeOutQuad)
+  .then(() => console.log('arrived'));
+loop.update = dt => { game.update(dt); tweens.tick(dt); };
 
 // versioned save / load
 let save = Save({

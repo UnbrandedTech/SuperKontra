@@ -9,3 +9,25 @@ export { Verlet } from './physics-verlet.js';
 export { Save } from './state.js';
 export { Mixer } from './audio.js';
 export { FSM } from './fsm.js';
+export {
+  Tweens,
+  linear,
+  easeInQuad,
+  easeOutQuad,
+  easeInOutQuad,
+  easeInCubic,
+  easeOutCubic,
+  easeInOutCubic,
+  easeInSine,
+  easeOutSine,
+  easeInOutSine,
+  easeInExpo,
+  easeOutExpo,
+  easeInOutExpo,
+  easeInBack,
+  easeOutBack,
+  easeInOutBack,
+  easeInBounce,
+  easeOutBounce,
+  easeInOutBounce
+} from './tween.js';
