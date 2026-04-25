@@ -13,6 +13,7 @@ This repo currently consumes a local kontra fork via `file:../kontra` while [str
 | `super-kontra/physics-verlet` | Positional Verlet solver — particles, distance constraints, pin constraints. Ropes / cloth / softbody. | implemented |
 | `super-kontra/state` | Versioned localStorage saves with automatic schema migrations and string export/import for cloud sync. | implemented |
 | `super-kontra/audio` | Channel-based mixer over `HTMLAudioElement`. Pulls audio by name from kontra's `audioAssets`, supports per-channel volume/mute/exclusive playback, fades, and overlapping SFX. | implemented |
+| `super-kontra/fsm` | Finite-state machine for game flow (menu/playing/paused/gameOver). Per-state lifecycle hooks dispatched from your kontra GameLoop. | implemented |
 
 ## Install (during local dev)
 
@@ -75,6 +76,34 @@ mixer.channel('music').volume = 0.2;
 theme.fadeOut(2);
 // in your update():
 mixer.tick(1 / 60);
+
+// finite-state machine for game flow
+let game = FSM({
+  initial: 'menu',
+  states: {
+    menu: {
+      enter() { /* show title */ },
+      update() { if (kontra.keyPressed('enter')) game.transition('playing'); }
+    },
+    playing: {
+      enter(opts) { /* start level opts.level */ },
+      update(dt) { /* run game */ },
+      render()   { /* draw game */ }
+    },
+    paused: {
+      render() { /* draw pause overlay */ }
+    }
+  }
+});
+game.start();
+
+let loop = GameLoop({
+  update(dt) { game.update(dt); },
+  render()   { game.render(); }
+});
+
+// transition with a payload
+game.transition('playing', { level: 1 });
 
 // versioned save / load
 let save = Save({

@@ -8,3 +8,4 @@ export { World } from './physics-rigid.js';
 export { Verlet } from './physics-verlet.js';
 export { Save } from './state.js';
 export { Mixer } from './audio.js';
+export { FSM } from './fsm.js';
