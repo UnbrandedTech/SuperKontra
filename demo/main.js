@@ -94,16 +94,25 @@ let bestCount = save.read()?.bestCount ?? 0;
 // Physics world — gravity + walls
 // ----------------------------------------------------------------
 const world = World({ gravity: { x: 0, y: 800 } });
+// Walls extend well past the visible canvas so a fast body can't
+// tunnel through in a single frame. With a 10px wall and circles
+// reaching 600+ px/s after a few bounces, dt × v can exceed wall
+// thickness — the body lands past the wall and the next narrowphase
+// pass finds no overlap. Padding to 200px gives a generous buffer.
+const WALL_PAD = 200;
 world.add({
-  x: 0, y: FLOOR_Y, width: W, height: 24,
+  x: -WALL_PAD, y: FLOOR_Y,
+  width: W + WALL_PAD * 2, height: WALL_PAD,
   mass: 0, restitution: 0.45, friction: 0.6
 });
 world.add({
-  x: -10, y: 0, width: 10, height: H,
+  x: -WALL_PAD, y: -WALL_PAD,
+  width: WALL_PAD, height: H + WALL_PAD * 2,
   mass: 0, restitution: 0.5
 });
 world.add({
-  x: W, y: 0, width: 10, height: H,
+  x: W, y: -WALL_PAD,
+  width: WALL_PAD, height: H + WALL_PAD * 2,
   mass: 0, restitution: 0.5
 });
 
@@ -254,7 +263,13 @@ const game = FSM({
           // throttle spawn rate
           if (Math.random() < 0.6) spawnCircle(mouseX, mouseY);
         }
-        world.step(step);
+        // substep the physics — splitting one 16ms frame into 4
+        // smaller steps cuts per-step displacement to ~4ms × v,
+        // so even fast bodies (700+ px/s) can't tunnel through
+        // a 10-pixel wall in one substep
+        const SUBSTEPS = 4;
+        const sub = step / SUBSTEPS;
+        for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
         rope.step(step);
         checkImpacts();
         // remove escapees so the array doesn't grow unbounded

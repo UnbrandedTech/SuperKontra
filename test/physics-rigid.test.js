@@ -500,6 +500,99 @@ test('rotation feeds back into collision detection', () => {
   );
 });
 
+// --------------------------------------------------------------
+// broadphase
+// --------------------------------------------------------------
+
+test('broadphase scales to hundreds of bodies without missing collisions', () => {
+  // 200 circles dropped onto a static floor — every body should
+  // settle on or above the floor; none should fall through, none
+  // should escape sideways. Mostly a smoke test that the spatial
+  // grid produces every real collision pair (false negatives in
+  // broadphase = bodies passing through each other).
+  const world = World({ gravity: { x: 0, y: 500 } });
+  const FLOOR_Y = 400;
+  world.add({
+    x: -200,
+    y: FLOOR_Y,
+    width: 600,
+    height: 200,
+    mass: 0,
+    restitution: 0.3
+  });
+  // walls (extra wide to prevent tunneling at large body counts)
+  world.add({
+    x: -200,
+    y: 0,
+    width: 200,
+    height: FLOOR_Y,
+    mass: 0
+  });
+  world.add({
+    x: 200,
+    y: 0,
+    width: 200,
+    height: FLOOR_Y,
+    mass: 0
+  });
+  const balls = [];
+  for (let i = 0; i < 200; i++) {
+    balls.push(
+      world.add({
+        x: 5 + (i % 20) * 10,
+        y: -i * 5, // staggered drop heights
+        radius: 4,
+        anchor: { x: 0.5, y: 0.5 },
+        mass: 1,
+        restitution: 0.2,
+        friction: 0.4
+      })
+    );
+  }
+  // simulate ~3 seconds of falling
+  for (let i = 0; i < 180; i++) world.step(1 / 60);
+  // every ball should have its centre near the floor — not past
+  // the bottom of the floor slab (FLOOR_Y + 200) and not way out
+  // of bounds. some Baumgarte-tolerated penetration is expected
+  // when 200 bodies pile up; the contract being tested is "no
+  // tunneling," not "zero overlap on rest contact".
+  for (const b of balls) {
+    assert.ok(
+      b.y < FLOOR_Y + 50,
+      `ball escaped through floor: y=${b.y}`
+    );
+    assert.ok(
+      b.x > -10 && b.x < 210,
+      `ball escaped sideways: x=${b.x}`
+    );
+  }
+});
+
+test('custom cellSize is honored', () => {
+  // mostly a smoke test — pick an absurd cellSize and confirm the
+  // sim still runs without errors and bodies still collide
+  const world = World({
+    gravity: { x: 0, y: 500 },
+    cellSize: 1000
+  });
+  world.add({
+    x: -100,
+    y: 100,
+    width: 300,
+    height: 10,
+    mass: 0
+  });
+  const ball = world.add({
+    x: 50,
+    y: 0,
+    width: 10,
+    height: 10,
+    mass: 1
+  });
+  for (let i = 0; i < 60; i++) world.step(1 / 60);
+  assert.ok(ball.y < 100, `ball should rest on floor, y=${ball.y}`);
+});
+
 test('two static bodies do not interact', () => {
   const world = World();
   const a = world.add({

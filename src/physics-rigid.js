@@ -32,6 +32,10 @@ const PERCENT = 0.2;
 /**
  * @param {Object} [opts]
  * @param {{x: number, y: number}} [opts.gravity={x:0,y:0}]
+ * @param {number} [opts.cellSize=64] - broadphase grid cell size
+ *   in world units. Pair candidates are bodies sharing at least one
+ *   cell. ~2× the typical body size is a good default; very dense
+ *   scenes benefit from a tighter value, sparse scenes tolerate any.
  * @returns {{
  *   bodies: Object[],
  *   gravity: {x: number, y: number},
@@ -43,6 +47,7 @@ const PERCENT = 0.2;
 export function World(opts = {}) {
   const bodies = [];
   const gravity = opts.gravity ?? { x: 0, y: 0 };
+  const cellSize = opts.cellSize ?? 64;
 
   function add(body) {
     body.vx ??= 0;
@@ -83,21 +88,91 @@ export function World(opts = {}) {
       b.rotation += b.va * dt;
     }
 
-    // 2) narrowphase: O(n²) pair test. swap in a grid broadphase
-    // when body counts grow (>~100).
-    for (let i = 0; i < bodies.length; i++) {
-      for (let j = i + 1; j < bodies.length; j++) {
-        const a = bodies[i];
-        const b = bodies[j];
-        if (a.mass === 0 && b.mass === 0) continue;
-        const r = collidesWithResponse(a, b);
-        if (r) resolve(a, b, r);
-      }
+    // 2) broadphase + narrowphase. spatial-grid broadphase emits
+    // candidate pairs whose AABBs share at least one cell; the
+    // narrowphase (SAT via collide.js) confirms or rejects each.
+    // skipping the O(n²) full sweep is the only thing that makes
+    // dense scenes (hundreds of bodies) viable at 60fps.
+    const pairs = broadphasePairs(bodies, cellSize);
+    for (let i = 0; i < pairs.length; i += 2) {
+      const a = pairs[i];
+      const b = pairs[i + 1];
+      if (a.mass === 0 && b.mass === 0) continue;
+      const r = collidesWithResponse(a, b);
+      if (r) resolve(a, b, r);
     }
   }
 
   return { bodies, gravity, add, remove, step };
 }
+
+/**
+ * Uniform-grid broadphase. Bucket each body's AABB into every grid
+ * cell it touches; any pair sharing a cell becomes a candidate.
+ * The narrowphase filters false positives. Pairs are deduped by a
+ * numeric key (i*N + j, smaller index first) since a body with a
+ * large AABB sits in many cells.
+ *
+ * Returns a flat array of [a, b, a, b, …] alternating pairs to
+ * avoid allocating sub-arrays in the hot path. Caller iterates by
+ * stepping i += 2.
+ */
+function broadphasePairs(bodies, cellSize) {
+  const N = bodies.length;
+  const grid = new Map();
+  // bucket bodies into cells they overlap
+  for (let i = 0; i < N; i++) {
+    const b = bodies[i];
+    const anchor = b.anchor ?? ZERO_ANCHOR;
+    let w, h;
+    if (b.radius != null) {
+      w = h = b.radius * 2;
+    } else {
+      w = b.width ?? 0;
+      h = b.height ?? 0;
+    }
+    const minX = b.x - w * anchor.x;
+    const minY = b.y - h * anchor.y;
+    const c0 = Math.floor(minX / cellSize);
+    const c1 = Math.floor((minX + w) / cellSize);
+    const r0 = Math.floor(minY / cellSize);
+    const r1 = Math.floor((minY + h) / cellSize);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        // pack the cell coordinates into a single signed integer
+        // key — Map lookups on numbers are faster than on strings,
+        // and game worlds rarely span more than ±32k cells in
+        // either axis (the bit-shift assumes that range)
+        const key = (c << 16) ^ (r & 0xffff);
+        let bucket = grid.get(key);
+        if (!bucket) grid.set(key, (bucket = []));
+        bucket.push(i);
+      }
+    }
+  }
+
+  // emit unique pairs from each bucket
+  const seen = new Set();
+  const out = [];
+  for (const bucket of grid.values()) {
+    const len = bucket.length;
+    for (let i = 0; i < len; i++) {
+      for (let j = i + 1; j < len; j++) {
+        const a = bucket[i];
+        const b = bucket[j];
+        const lo = a < b ? a : b;
+        const hi = a < b ? b : a;
+        const pairKey = lo * N + hi;
+        if (seen.has(pairKey)) continue;
+        seen.add(pairKey);
+        out.push(bodies[a], bodies[b]);
+      }
+    }
+  }
+  return out;
+}
+
+const ZERO_ANCHOR = { x: 0, y: 0 };
 
 // Auto-compute moment of inertia from a body's mass and shape. The
 // formulas assume the body's mass is uniformly distributed; this is
