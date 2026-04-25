@@ -29,9 +29,12 @@ import {
   easeOutCubic,
   easeOutBack
 } from 'super-kontra/tween.js';
+import { Debug } from 'super-kontra/debug.js';
 
 const { canvas, context } = init();
 initKeys();
+
+const debug = Debug({ context, position: 'top-right' });
 
 const W = canvas.width;
 const H = canvas.height;
@@ -269,8 +272,10 @@ const game = FSM({
         // a 10-pixel wall in one substep
         const SUBSTEPS = 4;
         const sub = step / SUBSTEPS;
-        for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
-        rope.step(step);
+        debug.time('phys', () => {
+          for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
+        });
+        debug.time('rope', () => rope.step(step));
         checkImpacts();
         // remove escapees so the array doesn't grow unbounded
         for (let i = bodies.length - 1; i >= 0; i--) {
@@ -384,12 +389,20 @@ onKey('r', () => {
 // ----------------------------------------------------------------
 // Main loop
 // ----------------------------------------------------------------
+// 'd' toggles the debug overlay
+onKey('d', () => debug.toggle());
+
 GameLoop({
   update(dt) {
-    game.update(dt);
-    tweens.tick(dt);
+    debug.time('upd', () => {
+      game.update(dt);
+      tweens.tick(dt);
+    });
   },
   render() {
-    game.render();
+    debug.tick();
+    debug.time('rndr', () => game.render());
+    debug.count('bodies', bodies.length);
+    debug.render();
   }
 }).start();

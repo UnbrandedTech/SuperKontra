@@ -8,6 +8,7 @@
     ".": "./src/index.js",
     "./audio": "./src/audio.js",
     "./collide": "./src/collide.js",
+    "./debug": "./src/debug.js",
     "./fsm": "./src/fsm.js",
     "./path": "./src/path.js",
     "./physics-rigid": "./src/physics-rigid.js",

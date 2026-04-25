@@ -16,6 +16,7 @@ This repo currently consumes a local kontra fork via `file:../kontra` while [str
 | `super-kontra/fsm` | Finite-state machine for game flow (menu/playing/paused/gameOver). Stack-based — push/pop overlay states like pause menus on top of an active scene. Per-state lifecycle hooks dispatched from your kontra GameLoop. | implemented |
 | `super-kontra/tween` | Tween manager + 19 Penner easing functions (linear/quad/cubic/sine/expo/back/bounce in/out/inOut variants). Interpolate any object's properties over time; tick(dt) advances all active tweens. | implemented |
 | `super-kontra/path` | A* pathfinding on a 2D tile grid. 4- or 8-way connectivity, weighted costs, pluggable heuristic. Drop-in for kontra TileEngine layer data. | implemented |
+| `super-kontra/debug` | On-canvas FPS / section-timing / counter overlay. Drop-in for any kontra GameLoop. Toggle visibility, reposition. | implemented |
 
 ## Install (during local dev)
 
