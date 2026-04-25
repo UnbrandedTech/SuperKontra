@@ -132,6 +132,12 @@ function spawnCircle(x, y) {
     mass: 1,
     restitution: 0.55,
     friction: 0.4,
+    // damping bleeds velocity so isolated bodies actually come
+    // to rest rather than jittering forever on micro-bounces.
+    // dense piles still won't fully sleep without island-based
+    // sleeping (Box2D style) — that's a future enhancement.
+    damping: 0.3,
+    angularDamping: 1.0,
     vx: (Math.random() - 0.5) * 80,
     vy: -40
   };
@@ -403,6 +409,11 @@ GameLoop({
     debug.tick();
     debug.time('rndr', () => game.render());
     debug.count('bodies', bodies.length);
+    // count how many bodies are awake — a settled pile should
+    // have most asleep, which is where the perf savings come from
+    let awake = 0;
+    for (const b of bodies) if (!b.sleeping) awake++;
+    debug.count('awake', awake);
     debug.render();
   }
 }).start();

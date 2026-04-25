@@ -593,6 +593,114 @@ test('custom cellSize is honored', () => {
   assert.ok(ball.y < 100, `ball should rest on floor, y=${ball.y}`);
 });
 
+// --------------------------------------------------------------
+// sleeping
+// --------------------------------------------------------------
+
+test('a body that comes to rest goes to sleep after sleepTime', () => {
+  const world = World({
+    gravity: { x: 0, y: 500 },
+    sleepTime: 0.2 // shorter for a quicker test
+  });
+  const ball = world.add({
+    x: 0, y: 0,
+    width: 10, height: 10,
+    mass: 1, restitution: 0
+  });
+  world.add({
+    x: -100, y: 100,
+    width: 300, height: 10,
+    mass: 0
+  });
+  // run long enough that the ball settles AND its sleep timer
+  // exceeds sleepTime
+  for (let i = 0; i < 90; i++) world.step(1 / 60);
+  assert.equal(
+    ball.sleeping,
+    true,
+    `expected sleeping=true after settling, got ${ball.sleeping}`
+  );
+});
+
+test('a sleeping body skips integration — no gravity drift, no velocity', () => {
+  const world = World({ gravity: { x: 0, y: 1000 } });
+  const body = world.add({
+    x: 100, y: 100,
+    width: 10, height: 10,
+    mass: 1
+  });
+  body.sleeping = true; // force sleep up front
+  for (let i = 0; i < 60; i++) world.step(1 / 60);
+  assert.equal(body.x, 100);
+  assert.equal(body.y, 100);
+  assert.equal(body.vy, 0);
+});
+
+test('a sleeping body wakes when struck by a moving body', () => {
+  const world = World({ gravity: { x: 0, y: 0 } });
+  const sleeper = world.add({
+    x: 50, y: 50,
+    width: 20, height: 20,
+    mass: 1
+  });
+  sleeper.sleeping = true;
+  const hammer = world.add({
+    x: 0, y: 50,
+    width: 20, height: 20,
+    mass: 1, vx: 100
+  });
+  for (let i = 0; i < 60; i++) world.step(1 / 60);
+  assert.equal(sleeper.sleeping, false, 'sleeper should have woken');
+  assert.notEqual(hammer.sleeping, true);
+  // sleeper should have moved (had momentum transferred)
+  assert.ok(sleeper.x !== 50, 'sleeper should be moving after impact');
+});
+
+test('world.wake(body) clears the sleep flag explicitly', () => {
+  const world = World();
+  const body = world.add({
+    x: 0, y: 0, width: 10, height: 10, mass: 1
+  });
+  body.sleeping = true;
+  body._sleepT = 999;
+  world.wake(body);
+  assert.equal(body.sleeping, false);
+  assert.equal(body._sleepT, 0);
+});
+
+test('sleeping bodies stay put under gravity for many seconds', () => {
+  // regression: an early version put bodies to sleep but didn't
+  // skip the integration step, so they kept accelerating downward
+  const world = World({ gravity: { x: 0, y: 1000 } });
+  const body = world.add({
+    x: 50, y: 50, width: 10, height: 10, mass: 1
+  });
+  body.sleeping = true;
+  for (let i = 0; i < 600; i++) world.step(1 / 60); // 10 seconds
+  assert.equal(body.x, 50);
+  assert.equal(body.y, 50);
+});
+
+test('sleep-vs-sleep pair tests are skipped (perf invariant)', () => {
+  // verify the optimization actually fires — a sleeping body
+  // adjacent to another sleeping body never has resolve() called,
+  // so neither gets nudged from positional correction.
+  const world = World({ gravity: { x: 0, y: 0 } });
+  const a = world.add({
+    x: 0, y: 0, width: 12, height: 12, mass: 1
+  });
+  const b = world.add({
+    // overlapping by 2 px — would normally trigger resolve
+    x: 10, y: 0, width: 12, height: 12, mass: 1
+  });
+  a.sleeping = true;
+  b.sleeping = true;
+  for (let i = 0; i < 30; i++) world.step(1 / 60);
+  // positions unchanged — the overlap was never resolved
+  assert.equal(a.x, 0);
+  assert.equal(b.x, 10);
+});
+
 test('two static bodies do not interact', () => {
   const world = World();
   const a = world.add({

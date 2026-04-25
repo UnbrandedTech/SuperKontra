@@ -36,18 +36,30 @@ const PERCENT = 0.2;
  *   in world units. Pair candidates are bodies sharing at least one
  *   cell. ~2× the typical body size is a good default; very dense
  *   scenes benefit from a tighter value, sparse scenes tolerate any.
+ * @param {number} [opts.sleepLinear=1] - bodies whose |v| stays
+ *   below this for `sleepTime` seconds get marked sleeping. Sleeping
+ *   bodies skip integration and skip pair tests against other
+ *   sleeping bodies — the canonical optimization for dense piles.
+ * @param {number} [opts.sleepAngular=0.05] - same idea for angular
+ *   velocity (rad/s).
+ * @param {number} [opts.sleepTime=0.5] - how long the speed must
+ *   stay low before the body is put to sleep, in seconds.
  * @returns {{
  *   bodies: Object[],
  *   gravity: {x: number, y: number},
  *   add: (body: Object) => Object,
  *   remove: (body: Object) => void,
- *   step: (dt: number) => void
+ *   step: (dt: number) => void,
+ *   wake: (body: Object) => void
  * }}
  */
 export function World(opts = {}) {
   const bodies = [];
   const gravity = opts.gravity ?? { x: 0, y: 0 };
   const cellSize = opts.cellSize ?? 64;
+  const sleepLinear = opts.sleepLinear ?? 1;
+  const sleepAngular = opts.sleepAngular ?? 0.05;
+  const sleepTime = opts.sleepTime ?? 0.5;
 
   function add(body) {
     body.vx ??= 0;
@@ -59,6 +71,8 @@ export function World(opts = {}) {
     body.friction ??= 0;
     body.damping ??= 0;
     body.angularDamping ??= 0;
+    body.sleeping ??= false;
+    body._sleepT ??= 0; // accumulated time below the wake threshold
     if (body.inertia == null) body.inertia = autoInertia(body);
     bodies.push(body);
     return body;
@@ -69,13 +83,19 @@ export function World(opts = {}) {
     if (i >= 0) bodies.splice(i, 1);
   }
 
+  /** Force a body awake — call after externally mutating its
+   *  velocity, otherwise the sleep flag will keep it frozen. */
+  function wake(body) {
+    body.sleeping = false;
+    body._sleepT = 0;
+  }
+
   function step(dt) {
-    // 1) integrate forces → velocity → position. semi-implicit
-    // Euler. rotation integrates the same way: gravity doesn't
-    // produce torque (no field acts on angular dofs by default), so
-    // angular velocity only changes from impulses during resolve.
+    // 1) integrate forces → velocity → position. sleeping and
+    // static bodies skip integration entirely. semi-implicit Euler
+    // for the rest.
     for (const b of bodies) {
-      if (b.mass === 0) continue;
+      if (b.mass === 0 || b.sleeping) continue;
       b.vx += gravity.x * dt;
       b.vy += gravity.y * dt;
       const damp = 1 - b.damping * dt;
@@ -88,22 +108,46 @@ export function World(opts = {}) {
       b.rotation += b.va * dt;
     }
 
-    // 2) broadphase + narrowphase. spatial-grid broadphase emits
-    // candidate pairs whose AABBs share at least one cell; the
-    // narrowphase (SAT via collide.js) confirms or rejects each.
-    // skipping the O(n²) full sweep is the only thing that makes
-    // dense scenes (hundreds of bodies) viable at 60fps.
+    // 2) broadphase + narrowphase. skip pairs where neither body
+    // is "active" — a sleeping body resting on a static floor, or
+    // two sleeping bodies, can't begin to collide on their own.
+    // when a moving body strikes a sleeper, the narrowphase still
+    // runs and the resolver wakes both.
     const pairs = broadphasePairs(bodies, cellSize);
     for (let i = 0; i < pairs.length; i += 2) {
       const a = pairs[i];
       const b = pairs[i + 1];
-      if (a.mass === 0 && b.mass === 0) continue;
+      const aInactive = a.sleeping || a.mass === 0;
+      const bInactive = b.sleeping || b.mass === 0;
+      if (aInactive && bInactive) continue;
       const r = collidesWithResponse(a, b);
-      if (r) resolve(a, b, r);
+      if (r) {
+        if (a.sleeping) wake(a);
+        if (b.sleeping) wake(b);
+        resolve(a, b, r);
+      }
+    }
+
+    // 3) sleep-candidate scan. a body that's been below the speed
+    // threshold for `sleepTime` gets put to sleep — its velocity
+    // is zeroed (no residual jitter) and future integration / pair
+    // tests skip it until something wakes it up.
+    for (const b of bodies) {
+      if (b.mass === 0 || b.sleeping) continue;
+      const speed = Math.hypot(b.vx, b.vy);
+      if (speed < sleepLinear && Math.abs(b.va) < sleepAngular) {
+        b._sleepT += dt;
+        if (b._sleepT >= sleepTime) {
+          b.sleeping = true;
+          b.vx = b.vy = b.va = 0;
+        }
+      } else {
+        b._sleepT = 0;
+      }
     }
   }
 
-  return { bodies, gravity, add, remove, step };
+  return { bodies, gravity, add, remove, step, wake };
 }
 
 /**
