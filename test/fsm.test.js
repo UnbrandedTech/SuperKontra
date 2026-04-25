@@ -167,6 +167,173 @@ test('current is null until start() is called', () => {
   assert.equal(fsm.current, 'a');
 });
 
+// --------------------------------------------------------------
+// stack semantics — push / pop / depth
+// --------------------------------------------------------------
+
+test('push() stacks a new state without exiting the underlying one', () => {
+  const playing = spies();
+  const paused = spies();
+  const fsm = FSM({
+    initial: 'playing',
+    states: { playing: playing.state, paused: paused.state }
+  });
+  fsm.start();
+  playing.calls.length = 0; // discard initial enter
+  fsm.push('paused');
+  // playing's exit is NOT called — it's still in the stack
+  assert.deepEqual(playing.calls, []);
+  // paused's enter IS called
+  assert.deepEqual(paused.calls, [['enter', undefined]]);
+  assert.equal(fsm.current, 'paused');
+  assert.equal(fsm.depth, 2);
+});
+
+test('pop() exits the top state and reveals the one beneath', () => {
+  const playing = spies();
+  const paused = spies();
+  const fsm = FSM({
+    initial: 'playing',
+    states: { playing: playing.state, paused: paused.state }
+  });
+  fsm.start();
+  fsm.push('paused');
+  paused.calls.length = 0;
+  playing.calls.length = 0;
+
+  fsm.pop();
+  // paused exits; playing does NOT re-enter (it never really left)
+  assert.deepEqual(paused.calls, [['exit']]);
+  assert.deepEqual(playing.calls, []);
+  assert.equal(fsm.current, 'playing');
+  assert.equal(fsm.depth, 1);
+  assert.equal(fsm.previous, 'paused');
+});
+
+test('update() only ticks the top state', () => {
+  const playing = spies();
+  const paused = spies();
+  const fsm = FSM({
+    initial: 'playing',
+    states: { playing: playing.state, paused: paused.state }
+  });
+  fsm.start();
+  fsm.push('paused');
+  playing.calls.length = 0;
+  paused.calls.length = 0;
+
+  fsm.update(0.016);
+
+  assert.deepEqual(
+    playing.calls.map(c => c[0]),
+    []
+  );
+  assert.deepEqual(
+    paused.calls.map(c => c[0]),
+    ['update']
+  );
+});
+
+test('render() walks the stack bottom-to-top so overlays draw on top', () => {
+  const order = [];
+  const fsm = FSM({
+    initial: 'playing',
+    states: {
+      playing: { render: () => order.push('playing') },
+      paused: { render: () => order.push('paused') }
+    }
+  });
+  fsm.start();
+  fsm.push('paused');
+  fsm.render();
+  assert.deepEqual(order, ['playing', 'paused']);
+});
+
+test('depth reflects the current stack size', () => {
+  const fsm = FSM({
+    initial: 'a',
+    states: { a: {}, b: {}, c: {} }
+  });
+  assert.equal(fsm.depth, 0);
+  fsm.start();
+  assert.equal(fsm.depth, 1);
+  fsm.push('b');
+  assert.equal(fsm.depth, 2);
+  fsm.push('c');
+  assert.equal(fsm.depth, 3);
+  fsm.pop();
+  assert.equal(fsm.depth, 2);
+  fsm.pop();
+  assert.equal(fsm.depth, 1);
+});
+
+test('pop() throws when only the initial state remains', () => {
+  const fsm = FSM({ initial: 'a', states: { a: {} } });
+  fsm.start();
+  assert.throws(() => fsm.pop(), /initial state/);
+});
+
+test('push() to an unknown state throws', () => {
+  const fsm = FSM({ initial: 'a', states: { a: {} } });
+  fsm.start();
+  assert.throws(() => fsm.push('zzz'), /unknown state/);
+});
+
+test('push() before start() throws', () => {
+  const fsm = FSM({ initial: 'a', states: { a: {}, b: {} } });
+  assert.throws(() => fsm.push('b'), /before start/);
+});
+
+test('transition() replaces the top of the stack without growing it', () => {
+  const fsm = FSM({
+    initial: 'a',
+    states: { a: {}, b: {}, c: {} }
+  });
+  fsm.start();
+  fsm.push('b');
+  assert.equal(fsm.depth, 2);
+  fsm.transition('c');
+  // top went from b → c; depth stays 2; a is still underneath
+  assert.equal(fsm.depth, 2);
+  assert.equal(fsm.current, 'c');
+  fsm.pop();
+  assert.equal(fsm.current, 'a');
+});
+
+test('push payload is forwarded to enter()', () => {
+  const dialog = spies();
+  const fsm = FSM({
+    initial: 'a',
+    states: { a: {}, dialog: dialog.state }
+  });
+  fsm.start();
+  fsm.push('dialog', { message: 'hi' });
+  assert.deepEqual(dialog.calls, [['enter', { message: 'hi' }]]);
+});
+
+test('hooks can call into pop() to dismiss themselves', () => {
+  // common pattern: a "splash" state pops itself after a tick
+  let ticks = 0;
+  const fsm = FSM({
+    initial: 'main',
+    states: {
+      main: {},
+      splash: {
+        update() {
+          ticks++;
+          if (ticks >= 2) fsm.pop();
+        }
+      }
+    }
+  });
+  fsm.start();
+  fsm.push('splash');
+  fsm.update(0.016);
+  assert.equal(fsm.current, 'splash');
+  fsm.update(0.016);
+  assert.equal(fsm.current, 'main');
+});
+
 test('hooks can call transition() to chain states', () => {
   // common pattern: a "loading" state auto-transitions to "playing"
   // when its update tick reports the assets are ready
