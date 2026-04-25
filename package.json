@@ -1,0 +1,38 @@
+{
+  "name": "super-kontra",
+  "version": "0.1.0",
+  "description": "A superset of kontra.js — opt-in extensions (physics, audio, etc.) for 2D games built with kontra.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./audio": "./src/audio.js",
+    "./collide": "./src/collide.js",
+    "./physics-rigid": "./src/physics-rigid.js",
+    "./physics-verlet": "./src/physics-verlet.js",
+    "./state": "./src/state.js"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "test:watch": "node --test --watch test/",
+    "lint": "eslint src/ test/"
+  },
+  "keywords": [
+    "kontra",
+    "game",
+    "2d",
+    "physics",
+    "sat",
+    "verlet"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "kontra": "file:../kontra"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
