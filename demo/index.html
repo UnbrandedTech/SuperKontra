@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SuperKontra Demo — Particle Garden</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #0b0b14; color: #eee; font-family: ui-monospace, monospace; }
+    .wrap { display: flex; flex-direction: column; align-items: center; padding: 24px 0; gap: 8px; }
+    canvas { display: block; background: #14142a; box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+    .hint { color: #777; font-size: 12px; letter-spacing: 0.05em; }
+    .badge { color: #888; font-size: 11px; }
+    .badge b { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="mainCanvas" width="800" height="600"></canvas>
+    <div class="hint">click + drag — drop circles &nbsp;·&nbsp; grab the rope tail &nbsp;·&nbsp; <b>Esc</b> pause &nbsp;·&nbsp; <b>R</b> reset</div>
+    <div class="badge">
+      modules in this demo: <b>physics-rigid</b> · <b>physics-verlet</b> · <b>collide</b> · <b>fsm</b> (with pause push) · <b>state</b> · <b>audio</b> · <b>tween</b>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "kontra": "/node_modules/kontra/kontra.mjs",
+        "super-kontra/": "/src/"
+      }
+    }
+  </script>
+  <script type="module" src="/demo/main.js"></script>
+</body>
+</html>

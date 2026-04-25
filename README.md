@@ -183,6 +183,18 @@ The `Save` module handles persistence; how you organize state at runtime is up t
 
 - **Save at boundaries**, not every frame — level complete, room transition, autosave tick, pause menu. Never mid-physics-step.
 
+## Demo
+
+A playable browser demo lives in [`demo/`](./demo/index.html). It exercises seven of the modules together (physics-rigid + verlet + collide + fsm + state + audio + tween) — drop circles with the mouse, drag the verlet rope, pause with `Esc`, watch the high-count save persist across reloads.
+
+ESM imports resolve through an importmap in `index.html`, so you need a local server (browsers won't load native ESM from `file://`). From the repo root:
+
+```bash
+npm install                   # populates node_modules/kontra via the file: dep
+python3 -m http.server 8080   # or any static-file server
+open http://localhost:8080/demo/
+```
+
 ## Tests
 
 ```bash
