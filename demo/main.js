@@ -266,17 +266,17 @@ const game = FSM({
 
     playing: {
       update(dt) {
-        // cap dt to avoid the spiral of death after a tab refocus
         const step = Math.min(dt, 1 / 30);
         if (mouseDown && !dragging) {
           // throttle spawn rate
           if (Math.random() < 0.6) spawnCircle(mouseX, mouseY);
         }
-        // substep the physics — splitting one 16ms frame into 4
-        // smaller steps cuts per-step displacement to ~4ms × v,
-        // so even fast bodies (700+ px/s) can't tunnel through
-        // a 10-pixel wall in one substep
-        const SUBSTEPS = 4;
+        // substep the physics. with 200px-thick walls the only
+        // way to tunnel in a single 1/60 frame is to exceed 12000
+        // px/s, which never happens in this scene. dropping from
+        // SUBSTEPS=4 to SUBSTEPS=1 is a 4× perf win that cost
+        // nothing visually.
+        const SUBSTEPS = 1;
         const sub = step / SUBSTEPS;
         debug.time('phys', () => {
           for (let i = 0; i < SUBSTEPS; i++) world.step(sub);
@@ -398,19 +398,31 @@ onKey('r', () => {
 // 'd' toggles the debug overlay
 onKey('d', () => debug.toggle());
 
+// kontra's GameLoop is accumulator-style: when a frame takes
+// longer than 16ms it tries to "catch up" by running multiple
+// update() ticks before the next render. once update is itself
+// slow (heavy physics, lots of bodies), the catch-up makes the
+// next frame longer, which queues more catch-ups — the classic
+// spiral of death. this counter caps catch-ups per visible
+// frame: under heavy load the simulation runs slower than
+// real-time but the frame rate stays responsive.
+let updatesThisFrame = 0;
+const MAX_CATCH_UP = 2;
+
 GameLoop({
   update(dt) {
+    if (updatesThisFrame >= MAX_CATCH_UP) return;
+    updatesThisFrame++;
     debug.time('upd', () => {
       game.update(dt);
       tweens.tick(dt);
     });
   },
   render() {
+    updatesThisFrame = 0;
     debug.tick();
     debug.time('rndr', () => game.render());
     debug.count('bodies', bodies.length);
-    // count how many bodies are awake — a settled pile should
-    // have most asleep, which is where the perf savings come from
     let awake = 0;
     for (const b of bodies) if (!b.sleeping) awake++;
     debug.count('awake', awake);
