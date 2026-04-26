@@ -7,7 +7,7 @@ export { collides, collidesWithResponse } from './collide.js';
 export { World } from './physics-rigid.js';
 export { Verlet } from './physics-verlet.js';
 export { Save } from './state.js';
-export { Mixer } from './audio.js';
+export { Mixer, loadAudioBlob } from './audio.js';
 export { FSM } from './fsm.js';
 export { findPath } from './path.js';
 export { Debug } from './debug.js';

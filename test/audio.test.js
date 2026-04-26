@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Mixer } from '../src/audio.js';
+import { Mixer, loadAudioBlob } from '../src/audio.js';
 
 // minimal HTMLAudioElement stand-in. Mirrors the API surface the
 // mixer touches; cloneNode() returns a fresh node so multiple
@@ -262,6 +262,213 @@ test('tick() does nothing when no fades are in flight', () => {
   m.tick(0.5);
   assert.equal(h.node.volume, v);
   assert.equal(h._stopped, false);
+});
+
+// ----------------------------------------------------------------
+// iOS unlock + pre-gesture queue
+// ----------------------------------------------------------------
+
+// minimal Document mock: tracks listeners by event name and lets
+// tests trigger them, mirroring the addEventListener({once,capture})
+// shape Mixer uses.
+function mockDocument() {
+  const listeners = {};
+  return {
+    addEventListener(name, fn) {
+      listeners[name] = listeners[name] || [];
+      listeners[name].push(fn);
+    },
+    /** synthetic gesture — fires every registered listener for `name` */
+    fire(name) {
+      (listeners[name] || []).slice().forEach(fn => fn());
+    }
+  };
+}
+
+test('Mixer is unlocked by default when no document is available', () => {
+  const m = Mixer({ document: null });
+  assert.equal(m.unlocked, true);
+});
+
+test('Mixer with a document starts locked until a gesture fires', () => {
+  const doc = mockDocument();
+  const m = Mixer({ document: doc });
+  assert.equal(m.unlocked, false);
+  doc.fire('pointerdown');
+  assert.equal(m.unlocked, true);
+});
+
+test('pre-unlock play() queues and does not fire audio.play()', () => {
+  const audio = makeAudio();
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  const handle = m.play('shot');
+  assert.ok(handle, 'pre-unlock play returns a deferred handle');
+  // none of the cloned nodes have started playing
+  assert.equal(audio.paused, true);
+});
+
+test('first gesture drains the queue and plays audio synchronously inside the handler', () => {
+  const audio = makeAudio();
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  m.play('shot');
+  m.play('shot');
+  assert.equal(m.channel('default').active.size, 0);
+  doc.fire('pointerdown');
+  // both queued plays are live now (each its own clone)
+  assert.equal(m.channel('default').active.size, 2);
+});
+
+test('cancelling a deferred handle prevents the play at drain time', () => {
+  const audio = makeAudio();
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  const a = m.play('shot');
+  const b = m.play('shot');
+  a.stop(); // cancel before unlock
+  doc.fire('pointerdown');
+  // only `b` made it to the active set
+  assert.equal(m.channel('default').active.size, 1);
+});
+
+test('audio sources seen pre-unlock are warm-played and paused at unlock', () => {
+  const audio = makeAudio();
+  let warmPlays = 0;
+  let warmPauses = 0;
+  // wrap the source's play/pause to count warmup invocations.
+  // (clones get their own play counters via cloneNode.)
+  const origPlay = audio.play.bind(audio);
+  audio.play = function () {
+    warmPlays++;
+    return origPlay();
+  };
+  const origPause = audio.pause.bind(audio);
+  audio.pause = function () {
+    warmPauses++;
+    return origPause();
+  };
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  m.play('shot'); // queued; doesn't touch the source's play yet
+  assert.equal(warmPlays, 0);
+  doc.fire('pointerdown');
+  // after gesture: source was warm-played at least once
+  assert.ok(warmPlays >= 1, `warmPlays=${warmPlays}`);
+});
+
+test('post-unlock plays bypass the queue and run immediately', () => {
+  const audio = makeAudio();
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  doc.fire('pointerdown'); // unlock first
+  const handle = m.play('shot');
+  assert.ok(handle.node, 'post-unlock returns a real handle with a node');
+  assert.equal(handle.node.paused, false);
+});
+
+test('mixer.unlock() forces the unlock without a real gesture', () => {
+  const audio = makeAudio();
+  const doc = mockDocument();
+  const m = Mixer({
+    resolve: makeResolve({ shot: audio }),
+    document: doc
+  });
+  m.play('shot'); // queued
+  m.unlock();
+  assert.equal(m.unlocked, true);
+  assert.equal(m.channel('default').active.size, 1);
+});
+
+test('multiple gestures only unlock once', () => {
+  const doc = mockDocument();
+  const m = Mixer({ document: doc });
+  doc.fire('pointerdown');
+  // second gesture is a no-op (Mixer registers listeners with
+  // {once: true} so repeated fires don't accumulate state)
+  doc.fire('pointerdown');
+  assert.equal(m.unlocked, true);
+});
+
+// ----------------------------------------------------------------
+// loadAudioBlob — fetches via Blob to dodge HTTP Range requests
+// ----------------------------------------------------------------
+
+test('loadAudioBlob fetches the URL, creates a blob: URL, and resolves on canplaythrough', async () => {
+  // mock fetch + URL.createObjectURL + Audio for the duration of
+  // the test. Restore at the end so other tests aren't affected.
+  const origFetch = globalThis.fetch;
+  const origCreateObjURL = globalThis.URL?.createObjectURL;
+  const origAudio = globalThis.Audio;
+
+  let blobUrlSeen;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    blob: async () => ({ /* fake blob */ size: 1024, type: 'audio/wav' })
+  });
+  globalThis.URL = globalThis.URL || {};
+  globalThis.URL.createObjectURL = blob => {
+    return 'blob:fake-' + blob.size;
+  };
+  globalThis.Audio = function FakeAudio() {
+    const listeners = {};
+    const node = {
+      addEventListener(name, fn) {
+        listeners[name] = fn;
+      },
+      load() {
+        // simulate the browser successfully loading the blob and
+        // firing canplaythrough on the next microtask
+        Promise.resolve().then(() =>
+          listeners.canplaythrough?.()
+        );
+      },
+      set src(v) {
+        blobUrlSeen = v;
+      }
+    };
+    return node;
+  };
+
+  try {
+    const audio = await loadAudioBlob('/audio/thud.wav');
+    assert.ok(audio);
+    assert.match(blobUrlSeen, /^blob:/);
+  } finally {
+    globalThis.fetch = origFetch;
+    if (origCreateObjURL)
+      globalThis.URL.createObjectURL = origCreateObjURL;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('loadAudioBlob throws on non-OK responses', async () => {
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404
+  });
+  try {
+    await assert.rejects(() => loadAudioBlob('/missing.wav'), /HTTP 404/);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
 });
 
 test('play() returns null and recovers gracefully when audio.play() rejects', async () => {

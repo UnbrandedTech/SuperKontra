@@ -24,13 +24,6 @@
  */
 
 /**
- * @typedef {Object} MixerOptions
- * @property {(name: string) => HTMLAudioElement | null | undefined} [resolve]
- *   - looks up an audio element by name. Typically
- *   `name => audioAssets[name]` if pairing with kontra.
- */
-
-/**
  * @typedef {Object} PlayOptions
  * @property {string} [channel='default']
  * @property {boolean} [loop=false]
@@ -47,9 +40,76 @@
  */
 
 /**
+ * Fetch an audio file as a Blob and return an HTMLAudioElement
+ * pointing at a `blob:` URL. Avoids the HTTP Range requests that
+ * `el.src = url; el.load()` triggers — those break under many
+ * service workers (Workbox without explicit range handling, the
+ * MDN tutorial SW patterns, the Wavedash and YT Playables
+ * iframe SWs) and silently fail to load audio.
+ *
+ * Use this when you're shipping into a PWA / SW-mediated context.
+ * For the simpler case (no service worker in the way) kontra's
+ * `loadAudio(url)` is lighter and supports format negotiation.
+ *
+ *   import { Mixer, loadAudioBlob } from 'super-kontra/audio';
+ *   const thud = await loadAudioBlob('/audio/thud.wav');
+ *   const mixer = Mixer();
+ *   mixer.play(thud);
+ *
+ * @param {string} url
+ * @returns {Promise<HTMLAudioElement>}
+ */
+export async function loadAudioBlob(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw Error(
+      `loadAudioBlob: HTTP ${response.status} for ${url}`
+    );
+  }
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const audio = new Audio();
+  return new Promise((resolve, reject) => {
+    // canplaythrough is the right ready-event for "fully loaded
+    // and able to play start-to-finish without buffering" — the
+    // semantic match for blob-based loading where bytes are local
+    audio.addEventListener(
+      'canplaythrough',
+      () => resolve(audio),
+      { once: true }
+    );
+    audio.addEventListener(
+      'error',
+      () =>
+        reject(
+          Error(`loadAudioBlob: audio decode failed for ${url}`)
+        ),
+      { once: true }
+    );
+    audio.src = blobUrl;
+    audio.load();
+  });
+}
+
+/**
+ * @typedef {Object} MixerOptions
+ * @property {(name: string) => HTMLAudioElement | null | undefined} [resolve]
+ *   - looks up an audio element by name. Typically
+ *   `name => audioAssets[name]` if pairing with kontra.
+ * @property {Document} [document=globalThis.document] - DOM document
+ *   to listen on for the first user gesture (iOS audio unlock).
+ *   Defaults to `globalThis.document`. Pass a mock for tests, or
+ *   `null` to disable gesture-gating entirely (useful in headless
+ *   environments where you control playback timing).
+ */
+
+/**
  * @param {MixerOptions} [options]
  */
-export function Mixer({ resolve } = {}) {
+export function Mixer({
+  resolve,
+  document: doc = globalThis.document
+} = {}) {
   // private master state — exposed via the accessors on `mixer`
   let masterVolume = 1;
   let masterMuted = false;
@@ -59,6 +119,65 @@ export function Mixer({ resolve } = {}) {
 
   /** @type {Set<any>} */
   const handles = new Set();
+
+  // ----------------------------------------------------------------
+  // iOS / autoplay-policy gating. Browsers reject audio.play() until
+  // the user has interacted with the page; iOS additionally requires
+  // each unique audio element to have its first play() inside a
+  // user-gesture handler. Mixer handles this transparently:
+  //
+  //   - pre-unlock plays go into a queue and return a deferred
+  //     handle; user can stop()/fadeOut() them and they'll be
+  //     skipped at drain time
+  //   - on the first pointerdown / keydown / touchstart, we drain
+  //     the queue synchronously inside the gesture handler (so iOS
+  //     considers each play user-initiated) and warm-play+pause
+  //     every audio element we've seen so future clones from those
+  //     sources work
+  //
+  // If no `document` is available (node tests, custom envs) we
+  // start unlocked — no gating to enforce.
+  // ----------------------------------------------------------------
+  let unlocked = !doc;
+  /** @type {{audio: any, opts: PlayOptions, deferred: any}[]} */
+  const queue = [];
+  /** @type {Set<any>} unique audio sources seen (to warm at unlock) */
+  const seen = new Set();
+
+  function tryUnlock() {
+    if (unlocked) return;
+    unlocked = true;
+    // drain pending plays inside this gesture handler — keeps each
+    // play() call user-initiated from iOS's perspective
+    const pending = queue.splice(0);
+    for (const item of pending) {
+      if (item.deferred._cancelled) continue;
+      const real = _doPlay(item.audio, item.opts);
+      if (real) item.deferred._real = real;
+    }
+    // warm every source audio: a synchronous play+pause inside the
+    // gesture marks each element as user-unlocked so future clones
+    // play normally
+    for (const audio of seen) {
+      const pr = audio.play();
+      if (pr && typeof pr.then === 'function') {
+        pr.then(() => audio.pause()).catch(() => {});
+      } else {
+        audio.pause();
+      }
+    }
+  }
+
+  if (doc && typeof doc.addEventListener === 'function') {
+    // capture-phase + once for low overhead. each event type only
+    // fires its first occurrence; tryUnlock no-ops once unlocked.
+    ['pointerdown', 'keydown', 'touchstart'].forEach(ev => {
+      doc.addEventListener(ev, tryUnlock, {
+        capture: true,
+        once: true
+      });
+    });
+  }
 
   // ensure a default channel always exists — convenience for
   // users who don't bother with channel definitions
@@ -112,7 +231,9 @@ export function Mixer({ resolve } = {}) {
   /**
    * Play a sound. `audioOrName` is either a name (passed through
    * `resolve`) or a raw `HTMLAudioElement`. Returns null if the
-   * name doesn't resolve, otherwise a handle.
+   * name doesn't resolve. Pre-unlock plays return a deferred
+   * handle and queue until the first user gesture; post-unlock
+   * plays return a real handle immediately.
    * @param {string | HTMLAudioElement} audioOrName
    * @param {PlayOptions} [opts]
    */
@@ -122,7 +243,34 @@ export function Mixer({ resolve } = {}) {
         ? resolve?.(audioOrName)
         : audioOrName;
     if (!audio) return null;
+    seen.add(audio);
 
+    if (!unlocked) {
+      // create a deferred handle that proxies stop / fadeOut to a
+      // real handle once the queue drains. cancelling pre-drain
+      // also flips _cancelled so tryUnlock skips this entry.
+      const deferred = {
+        _cancelled: false,
+        _real: null,
+        get done() {
+          return this._cancelled || (this._real?.done ?? false);
+        },
+        stop() {
+          this._cancelled = true;
+          this._real?.stop();
+        },
+        fadeOut(seconds) {
+          this._cancelled = true;
+          this._real?.fadeOut(seconds);
+        }
+      };
+      queue.push({ audio, opts, deferred });
+      return deferred;
+    }
+    return _doPlay(audio, opts);
+  }
+
+  function _doPlay(audio, opts) {
     const ch = channels.get(opts.channel ?? 'default') || channels.get('default');
 
     // exclusive channels (music) stop existing playback so a new
@@ -253,7 +401,18 @@ export function Mixer({ resolve } = {}) {
     set muted(m) {
       masterMuted = m;
       refreshAll();
-    }
+    },
+    /** Read-only: has a user gesture unlocked playback yet? */
+    get unlocked() {
+      return unlocked;
+    },
+    /**
+     * Force the unlock dance to run now. Useful for tests, or for
+     * games that have already-passed-through-a-gesture state when
+     * the Mixer is constructed (e.g. coming from a "press start"
+     * splash screen). Equivalent to a synthetic gesture event.
+     */
+    unlock: tryUnlock
   };
 
   return mixer;
